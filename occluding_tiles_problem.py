@@ -37,6 +37,13 @@ class Tile(object):
         if self.orientation is None:
             self.orientation = 2 * np.random.rand() * np.pi
 
+    def is_out_of_bounds(self):
+        if self.position[0] < 0.0 or self.position[0] > IMG_SIZE[0]:
+            return True
+        elif self.position[1] < 0.0 or self.position[1] > IMG_SIZE[1]:
+            return True
+        return False
+
     def draw(self, img):
         w, h = self.size
         cx, cy = self.position
@@ -92,6 +99,10 @@ class OccludingTilesHypothesis(Hypothesis):
                 self.tiles.append(Tile())
 
     def _calculate_log_prior(self):
+        for tile in self.tiles:
+            # if any tile is out of the image, return a very low prior probability
+            if tile.is_out_of_bounds():
+                return -100.0
         return 0.0
         # return len(self.tiles) * np.log(0.5)
 
@@ -209,7 +220,8 @@ if __name__ == "__main__":
 
     proposal = mcmclib.proposal.RandomMixtureProposal(moves, params)
 
-    observed = np.load('data/test_ot.npy')
+    observed = OccludingTilesHypothesis(tile_count=3).render()
+    # np.load('data/test_ot.npy')
 
     # choose sampler
     thinning_period = 2000

@@ -25,7 +25,7 @@ def get_batch(size=64):
     return x, y
 
 if __name__ == "__main__":
-    epoch_count = 5
+    epoch_count = 20
     batches_per_epoch = 500
     batches_per_test_epoch = 100
     batch_size = 64

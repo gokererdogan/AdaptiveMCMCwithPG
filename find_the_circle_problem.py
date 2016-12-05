@@ -16,7 +16,7 @@ import skimage.draw as draw
 from mcmclib.hypothesis import Hypothesis
 
 IMG_SIZE = (50, 50)
-CIRCLE_R = 8
+CIRCLE_R = 6
 
 
 class FindTheCircleProblem(Hypothesis):
@@ -28,7 +28,11 @@ class FindTheCircleProblem(Hypothesis):
             self.position = (np.random.rand(2) * IMG_SIZE)
 
     def _calculate_log_prior(self):
-        return 0.0
+        if 0.0 < self.position[0] < IMG_SIZE[0] and 0.0 < self.position[1] < IMG_SIZE[1]:
+            return 0.0
+        else:
+            # if circle is out of bounds, return a very low prior probability.
+            return -100.0
 
     def _calculate_log_likelihood(self, data=None):
         render = self.render()
@@ -50,8 +54,17 @@ class FindTheCircleProblem(Hypothesis):
 
     def render(self):
         image = np.zeros(IMG_SIZE)
+        rows, cols = draw.circle(r=int(self.position[0]), c=int(self.position[1]), radius=CIRCLE_R*1.8, shape=IMG_SIZE)
+        image[rows, cols] = 0.05
+        rows, cols = draw.circle(r=int(self.position[0]), c=int(self.position[1]), radius=CIRCLE_R*1.6, shape=IMG_SIZE)
+        image[rows, cols] = 0.35
+        rows, cols = draw.circle(r=int(self.position[0]), c=int(self.position[1]), radius=CIRCLE_R*1.4, shape=IMG_SIZE)
+        image[rows, cols] = 0.7
+        rows, cols = draw.circle(r=int(self.position[0]), c=int(self.position[1]), radius=CIRCLE_R*1.2, shape=IMG_SIZE)
+        image[rows, cols] = 0.9
         rows, cols = draw.circle(r=int(self.position[0]), c=int(self.position[1]), radius=CIRCLE_R, shape=IMG_SIZE)
         image[rows, cols] = 1.0
+
         return image
 
     def copy(self):
@@ -59,36 +72,43 @@ class FindTheCircleProblem(Hypothesis):
         return FindTheCircleProblem(position=pos_copy, ll_variance=self.ll_variance)
 
 
-def move_circle(h, params, move=None):
-    if move is None:
-        # sample move
-        move = np.random.randn(2) * params['MOVE_STD_DEV']
-
-    new_pos = h.position + move
-    if np.any(np.logical_or(new_pos < 0, new_pos > IMG_SIZE)):  # out of bounds
-        return h, 1.0, 1.0
-
+def move_circle(h, move):
     hp = h.copy()
     hp.position += move
+    return hp
+
+
+def random_move_circle_move(h, params):
+    # sample move
+    move = np.random.randn(2) * params['MOVE_STD_DEV']
+    hp = move_circle(h, move)
     return hp, 1.0, 1.0
 
 
 if __name__ == "__main__":
     import mcmclib.proposal
 
-    h = FindTheCircleProblem(ll_variance=.001)
-
-    moves = {'move_circle': move_circle}
+    moves = {'random_move_circle': random_move_circle_move}
 
     proposal = mcmclib.proposal.RandomMixtureProposal(moves, params={'MOVE_STD_DEV': 10.0})
 
-    observed = np.load('data/test_find_the_circle.npy')
-
-    # choose sampler
-    thinning_period = 500
-    sampler_class = 'mh'
     import mcmclib.mh_sampler
-    sampler = mcmclib.mh_sampler.MHSampler(h, observed, proposal, burn_in=1000, sample_count=10, best_sample_count=10,
-                                           thinning_period=thinning_period, report_period=thinning_period)
 
-    run = sampler.sample()
+    likelihood_variance = 0.0005
+    run_count = 20
+    sample_count = 5
+    thinning_period = 50
+    sampler_class = 'mh'
+    runs = []
+    avg_log_prob = np.zeros(sample_count*thinning_period)
+    for r in range(run_count):
+        h = FindTheCircleProblem(ll_variance=likelihood_variance)
+        observed = FindTheCircleProblem(ll_variance=likelihood_variance).render()
+        sampler = mcmclib.mh_sampler.MHSampler(h, observed, proposal, burn_in=0, sample_count=sample_count,
+                                               best_sample_count=sample_count, thinning_period=thinning_period,
+                                               report_period=thinning_period)
+        run = sampler.sample()
+        runs.append(run)
+        avg_log_prob += run.run_log.LogProbability
+
+    avg_log_prob /= run_count
