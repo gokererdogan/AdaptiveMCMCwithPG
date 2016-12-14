@@ -12,7 +12,7 @@ import warnings
 
 import scipy.stats
 import autograd.numpy as np
-from autograd import grad
+import autograd as ag
 
 
 class ParallelMHChains(object):
@@ -46,7 +46,7 @@ class ParallelMHChains(object):
         def _log_rr(pp):
             return np.log(1.0 - np.exp(self.log_acceptance_ratio(x, xp, pp)))
 
-        g_logrr = grad(_log_rr)
+        g_logrr = ag.grad(_log_rr)
         ar = np.exp(self.log_acceptance_ratio(x, xp, self.policy.params))
         if np.isnan(ar):
             warnings.warn("Acceptance ratio is nan.")
@@ -77,8 +77,7 @@ class ParallelMHChains(object):
                     else:
                         gradient = dlog_p_x_xp
                 else:
-                    if type(dlog_r) == float:
-                        print "xxx"
+                    assert(not type(dlog_r) == float)
                     gradient = [t1+t2 for t1, t2 in zip(dlog_p_xp_x,  dlog_r)]
 
                 # accumulate gradients
@@ -95,20 +94,21 @@ class ParallelMHChains(object):
 
 
 class GradientEstimator(object):
-    def __init__(self):
-        self.grad_variances = []
+    def __init__(self, clip=False):
+        self.clip = clip
+        pass
 
     def reset(self):
-        self.grad_variances = []
+        pass
 
     def estimate_gradient(self, rewards, grad_logp):
         g = []
-        var = 0.0
         for grad_logp_i in grad_logp:
-            gi = (grad_logp_i.T * rewards).T
-            var += np.sum(np.var(gi, axis=0))
-            g.append(np.mean(gi, axis=0))
-        self.grad_variances.append(var)
+            gi = np.mean((grad_logp_i.T * rewards).T, axis=0)
+            if self.clip:
+                if np.sum(np.square(gi)) > 1.0:
+                    gi /= np.sum(np.square(gi))
+            g.append(gi)
         return g
 
 
@@ -117,8 +117,8 @@ class BBVIEstimator(GradientEstimator):
     Use score function as control variate
     Ranganath, R., Gerrish, S., & Blei, D. M. (2013). Black Box Variational Inference.
     """
-    def __init__(self):
-        GradientEstimator.__init__(self)
+    def __init__(self, clip=False):
+        GradientEstimator.__init__(self, clip=clip)
 
     def estimate_gradient(self, rewards, grad_logp):
         cov = 0.0
@@ -141,8 +141,8 @@ class BBVIEstimator(GradientEstimator):
 
 
 class VIMCOEstimator(GradientEstimator):
-    def __init__(self):
-        GradientEstimator.__init__(self)
+    def __init__(self, clip=False):
+        GradientEstimator.__init__(self, clip=clip)
 
     def estimate_gradient(self, rewards, grad_logp):
         K = rewards.shape[0]
@@ -177,14 +177,15 @@ class TargetDistribution(object):
 
 class MultivariateGaussian(TargetDistribution):
     def __init__(self, mean, cov):
+        """
+        Assumes mean and cov are numpy arrays.
+        """
         TargetDistribution.__init__(self)
-        try:
-            self.D = mean.size
-        except AttributeError as e:
-            self.D = 1
-            warnings.warn("mean is not a numpy array. Assuming 1D Gaussian.")
-
-        self.dist = scipy.stats.multivariate_normal(mean=mean, cov=cov)
+        self.mean = mean
+        self.cov = cov
+        self.D = self.mean.size
+        
+        self.dist = scipy.stats.multivariate_normal(mean=self.mean, cov=self.cov)
 
     def initial_x(self):
         """
@@ -193,7 +194,8 @@ class MultivariateGaussian(TargetDistribution):
         Returns:
             numpy.ndarray
         """
-        return (np.random.rand(self.D)*12.0) - 6.0
+        six_sigma = 6 * np.sqrt(np.diag(self.cov))
+        return ((np.random.rand(self.D) - 0.5) * 2.0 * six_sigma) + self.mean
 
     def log_probability(self, x):
         return self.dist.logpdf(x)
@@ -225,7 +227,7 @@ class Policy(object):
         raise NotImplementedError()
 
 
-class GaussianPolicy(Policy):
+class LinearGaussianPolicy(Policy):
     def __init__(self, D, mean=None, sd=None):
         Policy.__init__(self)
         self.D = D
@@ -288,10 +290,141 @@ class GaussianPolicy(Policy):
         def _log_ppb(pp):
             return self.log_propose_probability(xp, x, pp)
 
-        g_logppf = grad(_log_ppf)
-        g_logppb = grad(_log_ppb)
+        g_logppf = ag.grad(_log_ppf)
+        g_logppb = ag.grad(_log_ppb)
         return np.exp(self.log_propose_probability(x, xp, self.params)), g_logppf(self.params), g_logppb(self.params)
 
+
+class NonlinearGaussianPolicy(Policy):
+    def __init__(self, D, n_hidden, mean=None, sd=None):
+        Policy.__init__(self)
+        self.D = D
+        self.n_hidden = n_hidden
+        self.params = []
+        # initialize input-hidden weight matrix
+        self.w_input_hidden = np.random.randn(self.D, self.n_hidden) * 0.01
+        self.b_hidden = np.random.randn(self.n_hidden) * 0.01
+        self.params.append(self.w_input_hidden)
+        self.params.append(self.b_hidden)
+        if mean is None:
+            self.mean_fixed = False
+            # hidden to output w
+            self.w_mean = np.random.randn(self.n_hidden, self.D) * 0.01
+            self.params.append(self.w_mean)
+            # hidden to output b
+            self.b_mean = np.random.randn(self.D) * 0.01
+            self.params.append(self.b_mean)
+        else:
+            self.mean_fixed = True
+            self.mean = mean
+
+        if sd is None:
+            self.sd_fixed = False
+            # hidden to output w
+            self.w_sd = np.random.randn(self.n_hidden, self.D) * 0.01
+            self.params.append(self.w_sd)
+            # hidden to output b
+            self.b_sd = np.random.randn(self.D) * 0.01
+            self.params.append(self.b_sd)
+        else:
+            self.sd_fixed = True
+            self.sd = sd
+
+    def get_proposal_distribution(self, x, params):
+        w_input_hidden = params[0]
+        b_hidden = params[1]
+        hidden_activations = np.tanh(np.dot(x, w_input_hidden) + b_hidden)
+        if self.mean_fixed:
+            mean = self.mean
+        else:
+            w_mean = params[2]
+            b_mean = params[3]
+            mean = np.dot(hidden_activations, w_mean) + b_mean
+
+        if self.sd_fixed:
+            sd = self.sd
+        else:
+            w_sd = params[-2]
+            b_sd = params[-1]
+            sd = np.exp(np.dot(hidden_activations, w_sd)) + b_sd
+
+        return mean, sd
+
+    def propose(self, x):
+        """
+        xp ~ q(xp|x)
+        """
+        m, sd = self.get_proposal_distribution(x, self.params)
+        a = m + sd*np.random.randn(m.size)
+        xp = x + a
+        return xp
+
+    def log_propose_probability(self, x, xp, params):
+        m_x, sd_x = self.get_proposal_distribution(x, params)
+        q_xp_x = -0.5*(np.sum((xp - x - m_x)**2 / (sd_x**2))) - 0.5*self.D*np.log(2*np.pi) - np.sum(np.log(sd_x))
+        return q_xp_x
+
+    def propose_probability(self, x, xp):
+        def _log_ppf(pp):
+            return self.log_propose_probability(x, xp, pp)
+
+        def _log_ppb(pp):
+            return self.log_propose_probability(xp, x, pp)
+
+        g_logppf = ag.grad(_log_ppf)
+        g_logppb = ag.grad(_log_ppb)
+        return np.exp(self.log_propose_probability(x, xp, self.params)), g_logppf(self.params), g_logppb(self.params)
+
+
+"""
+PARAMETER SCHEDULE
+"""
+
+
+class ParameterSchedule(object):
+    def __init__(self):
+        pass
+
+    def get_value(self, iteration_no):
+        raise NotImplementedError()
+
+
+class ConstantSchedule(ParameterSchedule):
+    def __init__(self, value):
+        self.value = value
+
+    def get_value(self, iteration_no):
+        return self.value
+
+    def __str__(self):
+        return "Constant schedule, value: {0:f}".format(self.value)
+
+    def __repr__(self):
+        return self.__str__()
+
+
+class LinearSchedule(ParameterSchedule):
+    def __init__(self, start_value, end_value, decrease_for):
+        ParameterSchedule.__init__(self)
+        self.start_value = start_value
+        self.end_value = end_value
+        self.decrease_for = decrease_for
+        self.decreasing = self.start_value > self.end_value
+
+    def get_value(self, iteration_no):
+        assert(iteration_no >= 0)
+        value = self.start_value + (iteration_no * (self.end_value - self.start_value) / self.decrease_for)
+        if (self.decreasing and value < self.end_value) or (not self.decreasing and value > self.end_value):
+            value = self.end_value
+        return value
+
+    def __str__(self):
+        return "Linear schedule, start: {0:f}, end: {1:f}, decrease for {2:d}".format(self.start_value,
+                                                                                      self.end_value,
+                                                                                      self.decrease_for)
+
+    def __repr__(self):
+        return self.__str__()
 
 """
 REWARD FUNCTIONS
@@ -376,7 +509,7 @@ def reward_auto_correlation_geyer(target_distribution, xs, accepteds, max_lag=No
     var = np.var(seq)
 
     if np.isclose(var, 0.0):
-        return 2*n - 1.0
+        return -2*n + 1.0
 
     for lag in range(0, max_lag+1):
         acorr[lag] = np.sum(seq[0:(n-lag)] * seq[lag:n]) / (n*var)
@@ -415,12 +548,12 @@ def reward_auto_correlation_batch_means(target_distribution, xs, accepteds, batc
     n = len(xs)
     batch_size = int(np.round(n / batch_count))
     samples = xs[0:(batch_count * batch_size)]
-    samples = np.reshape(samples, (batch_count, -1))
-    var_batch_means = np.var(np.mean(samples, axis=1))
-    var = np.var(samples)
-    if np.isclose(var, 0.0):
-        return batch_size
-    acorr_time = batch_size * var_batch_means / var
+    batch_samples = np.reshape(samples, (batch_count, -1) + samples.shape[1:])
+    var_batch_means = np.var(np.mean(batch_samples, axis=1), axis=0)
+    var = np.var(samples, axis=0)
+    if np.all(np.isclose(var, 0.0)):
+        return -batch_size
+    acorr_time = np.mean(batch_size * var_batch_means / var)
     return -acorr_time
 
 
@@ -431,49 +564,75 @@ def reward_efficiency_batch_means(target_distribution, xs, accepteds, batch_coun
 """OPTIMIZATION FUNCTIONS"""
 
 
-def adam(chains, gradient_estimator, learning_rate=0.001, epoch_count=100,
-         episodes_per_epoch=10, report_period=10):
+def adam(chains, gradient_estimator, learning_rate_schedule, epoch_count=100,
+         episodes_per_epoch=10, report_period=10, b1=0.9, b2=0.999, eps=10**-8):
     """
     Gradient ascent with adam.
+    Taken from autograd's adam implementation
+    """
     """
     # adam parameters
     b1 = 0.9
     b2 = 0.999
     eps = 10**-8
+    """
 
+    param_count = len(chains.policy.params)
     max_iteration = epoch_count * episodes_per_epoch
+    rewards = np.zeros(max_iteration)
+    grad_magnitudes = np.zeros((max_iteration, param_count))
+    params = list()
     m = [np.zeros_like(p) for p in chains.policy.params]
     v = [np.zeros_like(p) for p in chains.policy.params]
+
+    # store initial params
+    ps = []
+    for p in chains.policy.params:
+        ps.append(p.copy())
+    params.append(ps)
+
     for epoch in range(epoch_count):
         for episode in range(episodes_per_epoch):
             iteration = (epoch * episodes_per_epoch) + episode
             progress_bar(iteration+1, max_iteration, update_freq=max_iteration/100 or 1)
             rs, dps = chains.run_episode()
+            rewards[iteration] = np.mean(rs)
 
             g = gradient_estimator.estimate_gradient(rs, dps)
-            # taken from autograd's adam implementation
             for i, gi in enumerate(g):
                 m[i] = (1 - b1) * gi + b1 * m[i]  # First  moment estimate.
                 v[i] = (1 - b2) * (gi**2) + b2 * v[i]  # Second moment estimate.
-                mhat = m[i] / (1 - b1**(epoch + 1))    # Bias correction.
-                vhat = v[i] / (1 - b2**(epoch + 1))
-                chains.policy.params[i] += learning_rate*mhat / (np.sqrt(vhat + eps))
+                mhat = m[i] / (1 - b1**(iteration + 1))    # Bias correction.
+                vhat = v[i] / (1 - b2**(iteration + 1))
+                grad_magnitudes[iteration, i] = np.sum(np.square(gi))
+                learning_rate = learning_rate_schedule.get_value(iteration)
+                chains.policy.params[i] += learning_rate * (mhat / (np.sqrt(vhat) + eps))
 
         if (epoch+1) % report_period == 0:
             print
-            print "Epoch", epoch+1, chains.policy.params
-            print np.mean(rs)
+            print "Epoch {0:d}\tAvg. Reward: {1:.3f}".format(epoch+1, np.mean(rs))
+
+        # store params
+        ps = []
+        for p in chains.policy.params:
+            ps.append(p.copy())
+        params.append(ps)
 
         # reset the chains (i.e., start from random states)
         chains.reset()
+
+    return params, rewards, grad_magnitudes
+
+
+"""MISC. FUNCTIONS"""
 
 
 def estimate_reward_surface_wb(chains, seed=None):
     if seed is None:
         seed = np.random.randint(2**32 - 1, dtype=np.uint32)
-    wr = np.linspace(-3, 3, 20)
-    br = np.linspace(-2, 2, 20)
-    rewards = np.zeros((20, 20))
+    wr = np.linspace(-3, 3, 25)
+    br = np.linspace(-2, 2, 25)
+    rewards = np.zeros((25, 25))
     for i, w in enumerate(wr):
         chains.policy.params[0][0][0] = w
         for j, b in enumerate(br):
@@ -482,15 +641,17 @@ def estimate_reward_surface_wb(chains, seed=None):
             chains.reset()
             rs, _ = chains.run_episode()
             rewards[i, j] = np.mean(rs)
-            print i*20 +j, wr[i], br[j], rewards[i, j]
+            print i*25 + j, wr[i], br[j], rewards[i, j]
 
-    return rewards
+    return wr, br, rewards
 
 
 def estimate_reward_surface_b(chains, seed=None):
     if seed is None:
         seed = np.random.randint(2**32 - 1, dtype=np.uint32)
-    br = np.linspace(-1, 4, 100)
+    # vr = np.linspace(0.01, 10.0, 100)
+    # br = np.log(vr)
+    br = np.linspace(-2, 2, 100)
     rewards = np.zeros(100)
     chains.policy.params[0][0][0] = 0.0
     for j, b in enumerate(br):
@@ -501,13 +662,13 @@ def estimate_reward_surface_b(chains, seed=None):
         rewards[j] = np.mean(rs)
         print j, br[j], rewards[j]
 
-    return rewards
+    return br, rewards
 
 
 def estimate_reward_surface_w(chains, seed=None):
     if seed is None:
         seed = np.random.randint(2**32 - 1, dtype=np.uint32)
-    wr = np.linspace(-2, 2, 100)
+    wr = np.linspace(-3, 3, 100)
     rewards = np.zeros(100)
     chains.policy.params[1][0] = 0.0
     for j, w in enumerate(wr):
@@ -518,7 +679,7 @@ def estimate_reward_surface_w(chains, seed=None):
         rewards[j] = np.mean(rs)
         print j, wr[j], rewards[j]
 
-    return rewards
+    return wr, rewards
 
 
 if __name__ == "__main__":
@@ -539,7 +700,7 @@ if __name__ == "__main__":
     adam(my_chains, vimco_estimator, learning_rate=0.01, epoch_count=10, episodes_per_epoch=25, report_period=1)
     """
     my_target = MultivariateGaussian(mean=0.0, cov=1.0)
-    my_policy = GaussianPolicy(D=1, mean=np.zeros(1))
+    my_policy = LinearGaussianPolicy(D=1, mean=np.zeros(1))
     my_chains = ParallelMHChains(target_distribution=my_target, policy=my_policy,
                                  reward_function=reward_auto_correlation_batch_means, chain_count=20,
                                  episode_length=48)

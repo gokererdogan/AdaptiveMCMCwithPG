@@ -1,3 +1,11 @@
+"""
+Learning Data-Driven Proposals through Reinforcement Learning
+
+This is a reference implementation for the 1D Gaussian case.
+
+https://github.com/gokererdogan
+1 Dec. 2016
+"""
 from gmllib.helpers import progress_bar
 
 import autograd.numpy as np
