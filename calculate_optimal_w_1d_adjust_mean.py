@@ -41,7 +41,7 @@ from init_plotting import *
 ws = []
 m_prev = np.zeros((1, 1), dtype=object)
 m_prev[0, 0] = (0,)
-for n in range(2, 100):
+for n in range(2, 50):
     print n
     # construct m
     m = np.zeros((n, n), dtype=object)
@@ -63,7 +63,7 @@ for n in range(2, 100):
     m_prev = m
 
 ws = np.array(ws) - 1.0
-plt.plot(range(2, 100), ws)
+plt.plot(range(2, 50), ws)
 plt.xlabel("Number of timesteps")
 plt.ylabel("Optimal w")
 plt.savefig("optimal_w.png")

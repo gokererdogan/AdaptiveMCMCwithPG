@@ -14,19 +14,25 @@ class Policy(object):
     def __init__(self):
         pass
 
-    def get_proposal_distribution(self, x, params):
+    def __str__(self):
+        return "Abstract Policy class"
+
+    def __repr__(self):
+        return self.__str__()
+
+    def get_proposal_distribution(self, x, data, params):
         raise NotImplementedError()
 
-    def propose(self, x):
+    def propose(self, x, data):
         """
         xp ~ q(xp|x)
         """
         raise NotImplementedError()
 
-    def log_propose_probability(self, x, xp, params):
+    def log_propose_probability(self, x, data, xp, params):
         raise NotImplementedError()
 
-    def propose_probability(self, x, xp):
+    def propose_probability(self, x, data, xp):
         raise NotImplementedError()
 
 
@@ -55,7 +61,15 @@ class LinearGaussianPolicy(Policy):
             self.sd_fixed = True
             self.sd = sd
 
-    def get_proposal_distribution(self, x, params):
+    def __str__(self):
+        mean = self.mean if self.mean_fixed else None
+        sd = self.sd if self.sd_fixed else None
+        return "LinearGaussianPolicy with D={0:d}, mean={1:s} and sd={2:s}".format(self.D, mean, sd)
+
+    def __repr__(self):
+        return self.__str__()
+
+    def get_proposal_distribution(self, x, data, params):
         if self.mean_fixed:
             mean = self.mean
         else:
@@ -72,30 +86,30 @@ class LinearGaussianPolicy(Policy):
 
         return mean, sd
 
-    def propose(self, x):
+    def propose(self, x, data):
         """
         xp ~ q(xp|x)
         """
-        m, sd = self.get_proposal_distribution(x, self.params)
+        m, sd = self.get_proposal_distribution(x, data, self.params)
         a = m + sd*np.random.randn(m.size)
         xp = x + a
         return xp
 
-    def log_propose_probability(self, x, xp, params):
-        m_x, sd_x = self.get_proposal_distribution(x, params)
+    def log_propose_probability(self, x, data, xp, params):
+        m_x, sd_x = self.get_proposal_distribution(x, data, params)
         q_xp_x = -0.5*(np.sum((xp - x - m_x)**2 / (sd_x**2))) - 0.5*self.D*np.log(2*np.pi) - np.sum(np.log(sd_x))
         return q_xp_x
 
-    def propose_probability(self, x, xp):
+    def propose_probability(self, x, data, xp):
         def _log_ppf(pp):
-            return self.log_propose_probability(x, xp, pp)
+            return self.log_propose_probability(x, data, xp, pp)
 
         def _log_ppb(pp):
-            return self.log_propose_probability(xp, x, pp)
+            return self.log_propose_probability(xp, data, x, pp)
 
         g_logppf = ag.grad(_log_ppf)
         g_logppb = ag.grad(_log_ppb)
-        return np.exp(self.log_propose_probability(x, xp, self.params)), g_logppf(self.params), g_logppb(self.params)
+        return np.exp(self.log_propose_probability(x, data, xp, self.params)), g_logppf(self.params), g_logppb(self.params)
 
 
 class NonlinearGaussianPolicy(Policy):
@@ -133,7 +147,16 @@ class NonlinearGaussianPolicy(Policy):
             self.sd_fixed = True
             self.sd = sd
 
-    def get_proposal_distribution(self, x, params):
+    def __str__(self):
+        mean = self.mean if self.mean_fixed else None
+        sd = self.sd if self.sd_fixed else None
+        return "NonlinearGaussianPolicy with D={0:d}, n_hidden={1:d}, " \
+               "mean={2:s} and sd={3:s}".format(self.D, self.n_hidden, mean, sd)
+
+    def __repr__(self):
+        return self.__str__()
+
+    def get_proposal_distribution(self, x, data, params):
         w_input_hidden = params[0]
         b_hidden = params[1]
         hidden_activations = np.tanh(np.dot(x, w_input_hidden) + b_hidden)
@@ -153,28 +176,28 @@ class NonlinearGaussianPolicy(Policy):
 
         return mean, sd
 
-    def propose(self, x):
+    def propose(self, x, data):
         """
         xp ~ q(xp|x)
         """
-        m, sd = self.get_proposal_distribution(x, self.params)
+        m, sd = self.get_proposal_distribution(x, data, self.params)
         a = m + sd*np.random.randn(m.size)
         xp = x + a
         return xp
 
-    def log_propose_probability(self, x, xp, params):
-        m_x, sd_x = self.get_proposal_distribution(x, params)
+    def log_propose_probability(self, x, data, xp, params):
+        m_x, sd_x = self.get_proposal_distribution(x, data, params)
         q_xp_x = -0.5*(np.sum((xp - x - m_x)**2 / (sd_x**2))) - 0.5*self.D*np.log(2*np.pi) - np.sum(np.log(sd_x))
         return q_xp_x
 
-    def propose_probability(self, x, xp):
+    def propose_probability(self, x, data, xp):
         def _log_ppf(pp):
-            return self.log_propose_probability(x, xp, pp)
+            return self.log_propose_probability(x, data, xp, pp)
 
         def _log_ppb(pp):
-            return self.log_propose_probability(xp, x, pp)
+            return self.log_propose_probability(xp, data, x, pp)
 
         g_logppf = ag.grad(_log_ppf)
         g_logppb = ag.grad(_log_ppb)
-        return np.exp(self.log_propose_probability(x, xp, self.params)), g_logppf(self.params), g_logppb(self.params)
+        return np.exp(self.log_propose_probability(x, data, xp, self.params)), g_logppf(self.params), g_logppb(self.params)
 

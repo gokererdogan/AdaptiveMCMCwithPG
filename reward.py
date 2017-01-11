@@ -10,21 +10,32 @@ https://github.com/gokererdogan
 import autograd.numpy as np
 
 
-def log_prob(target_distribution, xs, accepteds):
+def log_prob(target_distribution, x0, xs, accepteds):
     """
     Returns average log probability of samples xs.
     """
     return np.mean([target_distribution.log_probability(x) for x in xs])
 
 
-def acceptance_rate(target_distribution, xs, accepteds):
+def log_prob_increase(target_distribution, x0, xs, accepteds):
+    """
+    Returns increase in log probability of samples xs.
+    """
+    return target_distribution.log_probability(xs[-1]) - target_distribution.log_probability(x0)
+
+
+def log_prob_increase_avg(target_distribution, x0, xs, accepteds):
+    return np.mean([target_distribution.log_probability(x) for x in xs]) - target_distribution.log_probability(x0)
+
+
+def acceptance_rate(target_distribution, x0, xs, accepteds):
     """
     Returns acceptance rate for samples xs.
     """
     return np.mean(accepteds)
 
 
-def auto_correlation_naive(target_distribution, xs, accepteds, max_lag=None):
+def auto_correlation_naive(target_distribution, x0, xs, accepteds, max_lag=None):
     """
     Calculates negative auto correlation of samples xs.
     This uses the usual window estimators for auto correlation and sums these to get an estimate
@@ -59,11 +70,11 @@ def auto_correlation_naive(target_distribution, xs, accepteds, max_lag=None):
     return -ac
 
 
-def efficiency_naive(target_distribution, xs, accepteds, max_lag=None):
+def efficiency_naive(target_distribution, x0, xs, accepteds, max_lag=None):
     return -1.0 / auto_correlation_naive(target_distribution, xs, accepteds, max_lag)
 
 
-def auto_correlation_geyer(target_distribution, xs, accepteds, max_lag=None):
+def auto_correlation_geyer(target_distribution, x0, xs, accepteds, max_lag=None):
     """
     Calculates an estimate of the autocorrelation time.
     Uses the initial monotone sequence estimator proposed in Geyer (1992).
@@ -109,11 +120,11 @@ def auto_correlation_geyer(target_distribution, xs, accepteds, max_lag=None):
     return -acorr_time
 
 
-def efficiency_geyer(target_distribution, xs, accepteds, max_lag=None):
+def efficiency_geyer(target_distribution, x0, xs, accepteds, max_lag=None):
     return -1.0 / auto_correlation_geyer(target_distribution, xs, accepteds, max_lag)
 
 
-def auto_correlation_batch_means(target_distribution, xs, accepteds, batch_count=4):
+def auto_correlation_batch_means(target_distribution, x0, xs, accepteds, batch_count=4):
     """
     Calculates an estimate of the autocorrelation time using the batch_means method.
     See Geyer (1992) or Thompson (2010).
@@ -136,6 +147,6 @@ def auto_correlation_batch_means(target_distribution, xs, accepteds, batch_count
     return -acorr_time
 
 
-def efficiency_batch_means(target_distribution, xs, accepteds, batch_count=4):
+def efficiency_batch_means(target_distribution, x0, xs, accepteds, batch_count=4):
     return -1.0 / auto_correlation_batch_means(target_distribution, xs, accepteds, batch_count)
 

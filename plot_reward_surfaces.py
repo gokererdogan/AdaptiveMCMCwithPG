@@ -26,7 +26,7 @@ def estimate_reward_surface_wb(chains, seed=None):
             chains.policy.params[1][0] = b
             np.random.seed(seed)
             chains.reset()
-            rs, _ = chains.run_episode()
+            rs = chains.run_episode()[0]
             rewards[i, j] = np.mean(rs)
             print i*25 + j, wr[i], br[j], rewards[i, j]
 
@@ -45,7 +45,7 @@ def estimate_reward_surface_b(chains, seed=None):
         chains.policy.params[1][0] = b
         np.random.seed(seed)
         chains.reset()
-        rs, _ = chains.run_episode()
+        rs = chains.run_episode()[0]
         rewards[j] = np.mean(rs)
         print j, br[j], rewards[j]
 
@@ -62,7 +62,7 @@ def estimate_reward_surface_w(chains, seed=None):
         chains.policy.params[0][0][0] = w
         np.random.seed(seed)
         chains.reset()
-        rs, _ = chains.run_episode()
+        rs = chains.run_episode()[0]
         rewards[j] = np.mean(rs)
         print j, wr[j], rewards[j]
 

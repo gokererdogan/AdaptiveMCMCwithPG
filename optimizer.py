@@ -12,7 +12,7 @@ import autograd.numpy as np
 
 
 def adam(chains, gradient_estimator, learning_rate_schedule, epoch_count=100,
-         episodes_per_epoch=10, report_period=10, b1=0.9, b2=0.999, eps=10**-8):
+         episodes_per_epoch=10, save_period=1, report_period=10, b1=0.9, b2=0.999, eps=10**-8):
     """
     Gradient ascent with adam.
     Taken from autograd's adam implementation
@@ -23,10 +23,15 @@ def adam(chains, gradient_estimator, learning_rate_schedule, epoch_count=100,
     b2 = 0.999
     eps = 10**-8
     """
+    # we don't want to skip saving the last state of parameters, so make sure that
+    # epoch count is a multiple of save period.
+    if epoch_count % save_period != 0:
+        raise ValueError("Epoch count needs to be a multiple of save period.")
 
     param_count = len(chains.policy.params)
     max_iteration = epoch_count * episodes_per_epoch
     rewards = np.zeros(max_iteration)
+    acceptance_rates = np.zeros(max_iteration)
     grad_magnitudes = np.zeros((max_iteration, param_count))
     params = list()
     m = [np.zeros_like(p) for p in chains.policy.params]
@@ -42,8 +47,9 @@ def adam(chains, gradient_estimator, learning_rate_schedule, epoch_count=100,
         for episode in range(episodes_per_epoch):
             iteration = (epoch * episodes_per_epoch) + episode
             progress_bar(iteration+1, max_iteration, update_freq=max_iteration/100 or 1)
-            rs, dps = chains.run_episode()
+            rs, dps, xs, ars = chains.run_episode()
             rewards[iteration] = np.mean(rs)
+            acceptance_rates[iteration] = np.mean(ars)
 
             g = gradient_estimator.estimate_gradient(rs, dps)
             for i, gi in enumerate(g):
@@ -56,17 +62,22 @@ def adam(chains, gradient_estimator, learning_rate_schedule, epoch_count=100,
                 chains.policy.params[i] += learning_rate * (mhat / (np.sqrt(vhat) + eps))
 
         if (epoch+1) % report_period == 0:
+            sid = epoch * episodes_per_epoch
+            eid = (epoch + 1) * episodes_per_epoch
             print
-            print "Epoch {0:d}\tAvg. Reward: {1:.3f}".format(epoch+1, np.mean(rs))
+            print "Epoch {0:d}\tAvg. Reward: {1:.3f}, " \
+                  "Acceptance Rate: {2:.3f}".format(epoch+1, np.mean(rewards[sid:eid]),
+                                                    np.mean(acceptance_rates[sid:eid]))
 
         # store params
-        ps = []
-        for p in chains.policy.params:
-            ps.append(p.copy())
-        params.append(ps)
+        if (epoch+1) % save_period == 0:
+            ps = []
+            for p in chains.policy.params:
+                ps.append(p.copy())
+            params.append(ps)
 
         # reset the chains (i.e., start from random states)
         chains.reset()
 
-    return params, rewards, grad_magnitudes
+    return params, rewards, grad_magnitudes, acceptance_rates
 

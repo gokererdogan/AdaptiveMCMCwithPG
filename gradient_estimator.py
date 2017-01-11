@@ -21,6 +21,12 @@ class GradientEstimator(object):
     def reset(self):
         pass
 
+    def __str__(self):
+        return "GradientEstimator with clip={0}".format(self.clip)
+
+    def __repr__(self):
+        return self.__str__()
+
     def estimate_gradient(self, rewards, grad_logp):
         g = []
         for grad_logp_i in grad_logp:
@@ -39,6 +45,12 @@ class BBVIEstimator(GradientEstimator):
     """
     def __init__(self, clip=False):
         GradientEstimator.__init__(self, clip=clip)
+
+    def __str__(self):
+        return "BBVIEstimator with clip={0}".format(self.clip)
+
+    def __repr__(self):
+        return self.__str__()
 
     def estimate_gradient(self, rewards, grad_logp):
         cov = 0.0
@@ -68,10 +80,17 @@ class VIMCOEstimator(GradientEstimator):
     def __init__(self, clip=False):
         GradientEstimator.__init__(self, clip=clip)
 
+    def __str__(self):
+        return "VIMCOEstimator with clip={0}".format(self.clip)
+
+    def __repr__(self):
+        return self.__str__()
+
     def estimate_gradient(self, rewards, grad_logp):
         K = rewards.shape[0]
         tot_r = np.sum(rewards)
-        rewards_baselined = (tot_r / K) - ((tot_r - rewards) / (K-1))
+        # rewards_baselined = (tot_r / K) - ((tot_r - rewards) / (K-1))
+        rewards_baselined = rewards - ((tot_r - rewards) / (K-1))
         g = GradientEstimator.estimate_gradient(self, rewards_baselined, grad_logp)
         return g
 
