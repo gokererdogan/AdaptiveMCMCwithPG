@@ -29,6 +29,10 @@ class ParallelMHChains(object):
         self.samples_per_episode = int(np.floor(self.episode_length / self.thinning_period))
         self.x0 = np.array([self.target_distribution.initial_x() for _ in range(self.chain_count)])
 
+        # get function for gradient of reject case
+        # (the gradients for the accept case do not involve the gradient of acceptance ratio)
+        self.grad_log_reject = ag.grad(self._log_rr, 3)
+
     def reset(self):
         # let the target distribution know we are starting a new chain.
         self.target_distribution.reset()
@@ -45,20 +49,15 @@ class ParallelMHChains(object):
         log_a = (logp_xp + log_q_x_xp) - (logp_x + log_q_xp_x)
         return log_a
 
-    def acceptance_ratio(self, x, data, xp):
-        def _log_rr(pp):
-            return np.log(1.0 - np.exp(self.log_acceptance_ratio(x, data, xp, pp)))
+    def _log_rr(self, x, data, xp, params):
+        return np.log(1.0 - np.exp(self.log_acceptance_ratio(x, data, xp, params)))
 
-        g_logrr = ag.grad(_log_rr)
+    def acceptance_ratio(self, x, data, xp):
         ar = np.exp(self.log_acceptance_ratio(x, data, xp, self.policy.params))
         if np.isnan(ar):
             warnings.warn("Acceptance ratio is nan.")
-        if ar < 1.0:
-            drr = g_logrr(self.policy.params)
-        else:
-            drr = [np.zeros(p.shape) for p in self.policy.params]
 
-        return ar, drr
+        return ar
 
     def run_episode(self):
         data = self.target_distribution.data
@@ -72,20 +71,25 @@ class ParallelMHChains(object):
             x = self.x0[c]
             for t in range(self.episode_length):
                 xp = self.policy.propose(x, data)
-                pp, dlog_p_xp_x, dlog_p_x_xp = self.policy.propose_probability(x, data, xp)
-                a, dlog_r = self.acceptance_ratio(x, data, xp)
+                a = self.acceptance_ratio(x, data, xp)
                 if np.random.rand() < a:  # accept
+                    # calculate gradient
+                    if a > 1.0:
+                        # gradient is dlog p(xp|x) / dparams
+                        gradient = self.policy.grad_log_propose_probability(x, data, xp, self.policy.params)
+                    else:
+                        # gradient is dlog p(x|xp) / dparams
+                        gradient = self.policy.grad_log_propose_probability(xp, data, x, self.policy.params)
+
                     accepteds[t] = True
                     x = xp
-
-                    if a > 1.0:
-                        gradient = dlog_p_xp_x
-                    else:
-                        gradient = dlog_p_x_xp
                 else:
+                    # calculate gradient of reject probability
+                    drr = self.grad_log_reject(x, data, xp, self.policy.params)
+                    dlog_p_xp_x = self.policy.grad_log_propose_probability(x, data, xp, self.policy.params)
+                    gradient = [t1+t2 for t1, t2 in zip(dlog_p_xp_x,  drr)]
+
                     accepteds[t] = False
-                    assert(not type(dlog_r) == float)
-                    gradient = [t1+t2 for t1, t2 in zip(dlog_p_xp_x,  dlog_r)]
 
                 # accumulate gradients
                 for dl, gi in zip(dlogps, gradient):

@@ -141,10 +141,9 @@ def auto_correlation_batch_means(target_distribution, x0, xs, accepteds, batch_c
     batch_samples = np.reshape(samples, (batch_count, -1) + samples.shape[1:])
     var_batch_means = np.var(np.mean(batch_samples, axis=1), axis=0)
     var = np.var(samples, axis=0)
-    if np.all(np.isclose(var, 0.0)):
-        return -batch_size
-    acorr_time = np.mean(batch_size * var_batch_means / var)
-    return -acorr_time
+    acorr_times = batch_size * var_batch_means / var
+    acorr_times[np.isclose(var, 0.0)] = batch_size
+    return -np.mean(acorr_times)
 
 
 def efficiency_batch_means(target_distribution, x0, xs, accepteds, batch_count=4):

@@ -8,10 +8,12 @@ Occluding tiles problem. Taken from
 9 Jan. 2016
 https://github.com/gokererdogan
 """
+from collections import OrderedDict
+
 import skimage.draw as draw
 
 import autograd.numpy as np
-import autograd as ag
+from autograd.scipy.signal import convolve
 
 from target_distribution import TargetDistribution
 from policy import Policy
@@ -24,7 +26,7 @@ COLORS = [(0.969, 0.076, 0.076), (0.995, 0.995, 0.161), (0.141, 0.978, 0.141),
           (0.165, 0.960, 0.960), (0.076, 0.076, 0.988), (0.981, 0.162, 0.981)]
 OUT_OF_BOUNDS_PENALTY = 10e6
 
-from collections import OrderedDict
+
 class RenderCache(object):
     def __init__(self):
         self.cache_size = 100
@@ -103,14 +105,23 @@ class OccludingTilesDistribution(TargetDistribution):
         if render_cache.in_cache(x):
             return render_cache.get(x)
 
+        img = OccludingTilesDistribution.render_rgb(x)
+
+        mimg = np.zeros((IMG_SIZE + (6,)))
+        for ci, c in enumerate(COLORS):
+            mimg[np.all(np.abs(img - c) < 1e-3, axis=2), ci] = 1.0
+
+        render_cache.add(x, mimg)
+        return mimg
+
+    @staticmethod
+    def render_rgb(x):
         img = np.zeros(IMG_SIZE + (3,))
         # sort tiles according to depth. start from the tile that is farthest away.
         zs = x[2::4]  # get every 3rd element
         ix = np.argsort(zs)
         for i in ix:
             OccludingTilesDistribution.draw_tile(x[i*4:(i+1)*4], img, COLORS[i])
-
-        render_cache.add(x, img)
         return img
 
     def log_probability(self, x):
@@ -126,74 +137,110 @@ class OccludingTilesDistribution(TargetDistribution):
 
 
 class OccludingTilesPolicy(Policy):
-    def __init__(self, sd_multiplier=1.0, n_hidden=100):
+    def __init__(self, learn_pick_tile=True, learn_move_tile=True, pick_filter_count=20, move_filter_count=50,
+                 move_filter_size=(3, 3), move_pool_size=(4, 4), move_sd_multiplier=1.0):
         Policy.__init__(self)
-        self.pick_tile_network_input_size = IMG_SIZE[0] * IMG_SIZE[1] * 3
-        self.move_tile_network_input_size = IMG_SIZE[0] * IMG_SIZE[1]
-        self.sd_multiplier = sd_multiplier
-        self.move_tile_network_n_hidden = n_hidden
+        self.learn_pick_tile = learn_pick_tile
+        self.learn_move_tile = learn_move_tile
+        self.move_sd_multiplier = move_sd_multiplier
 
-        # pick tile network params
         self.params = []
-        self.params.append(np.random.randn(self.pick_tile_network_input_size, 6) * 0.001)
+        if self.learn_pick_tile:
+            self.pick_filter_count = pick_filter_count
+            # pick tile network params
+            self.params.append(np.random.randn(6, self.pick_filter_count) * 0.01)
+            self.params.append(np.random.randn(self.pick_filter_count) * 0.01)
+            self.params.append(np.random.randn(self.pick_filter_count, 6) * 0.01)
+            self.params.append(np.random.randn(6) * 0.001)
 
-        # move tile network params
-        # w_h
-        self.params.append(np.random.randn(self.move_tile_network_input_size, self.move_tile_network_n_hidden) * 0.01)
-        # b_h
-        self.params.append(np.random.randn(self.move_tile_network_n_hidden) * 0.01)
-        # w_m
-        self.params.append(np.random.randn(self.move_tile_network_n_hidden, 4) * 0.01)
-        # w_sd
-        self.params.append(np.random.randn(self.move_tile_network_n_hidden, 4) * 0.01)
+        if self.learn_move_tile:
+            self.move_filter_count = move_filter_count
+            self.move_filter_size = move_filter_size
+            self.move_pool_size = move_pool_size
+            filtered_img_size = (IMG_SIZE[0] - self.move_filter_size[0] + 1, IMG_SIZE[1] - self.move_filter_size[1] + 1)
+            assert (filtered_img_size[0] % self.move_pool_size[0] == 0 and
+                    filtered_img_size[1] % self.move_pool_size[1] == 0), "Filter size and pool size are incompatible."
+            # move tile network params
+            self.params.append(np.random.randn(self.move_filter_count, *self.move_filter_size) * 0.01)
+            self.params.append(np.random.randn(self.move_filter_count) * 0.01)
+            pooled_img_size = self.move_filter_count * (filtered_img_size[0] // self.move_pool_size[0]) * \
+                              (filtered_img_size[1] // self.move_pool_size[1])
+            self.params.append(np.random.randn(pooled_img_size, 4) * 0.01)
+            self.params.append(np.random.randn(4) * 0.01)
 
     def __str__(self):
-        return "OccludingTilesPolicy with sd_multiplier={0}, n_hidden={1}".format(self.sd_multiplier,
-                                                                                  self.move_tile_network_n_hidden)
+        s = "OccludingTilesPolicy with sd_mult={0}".format(self.move_sd_multiplier)
+        if self.learn_pick_tile:
+            s += "; learned pick_tile (filter_count={0})".format(self.pick_filter_count)
+        if self.learn_move_tile:
+            s += "; learned move_tile (filter_count={0}, " \
+                 "filter_size={1})".format(self.move_filter_count, self.move_filter_size)
+        return s
 
     def __repr__(self):
         return self.__str__()
 
-    def get_proposal_distribution(self, x, data, params):
-        # proposal consists of two stages and is implemented in the below two methods.
-        pass
-
     def get_pick_tile_proposal(self, x, data, params):
+        if not self.learn_pick_tile:
+            return np.ones(6) / 6.0
+
         img = OccludingTilesDistribution.render(x)
-        nn_input = np.ravel(img - data)
+        nn_input = img - data
 
         # pick tile network
-        w = params[0]
-        pick_tile_outputs = np.dot(nn_input, w)
+        filter_w = params[0]
+        filter_b = params[1]
+        out_w = params[2]
+        out_b = params[3]
+        # conv + relu
+        filtered_input = np.maximum(np.dot(nn_input, filter_w) + filter_b, 0)
+        # global pooling (take mean of each channel) + fully connected
+        pick_tile_outputs = np.dot(np.mean(filtered_input, axis=(0, 1)), out_w) + out_b
         pick_tile_probs = np.exp(pick_tile_outputs) / np.sum(np.exp(pick_tile_outputs))
 
         return pick_tile_probs
 
     def get_move_tile_proposal(self, x, data, tile, params):
+        if not self.learn_move_tile:
+            return np.zeros(4), self.move_sd_multiplier * np.ones(4)
+
+        # pick tile network
+        offset = 0
+        if self.learn_pick_tile:
+            offset = 4
+        filter_w = params[offset + 0]
+        filter_b = params[offset + 1]
+        out_w = params[offset + 2]
+        out_b = params[offset + 3]
+
+        # form input
         img = OccludingTilesDistribution.render(x)
-        color = COLORS[tile]
-        # pick the pixels with this color (mask all other tiles)
-        mimg = np.zeros(IMG_SIZE)
-        mimg[np.all(img == color, axis=2)] = 1.0
-        mdata = np.zeros(IMG_SIZE)
-        mdata[np.all(data == color, axis=2)] = 1.0
-        nn_input = np.ravel(mimg - mdata)
-        # move tile network
-        # convert input to gray-scale
-        w_h = params[1]
-        b_h = params[2]
-        hidden_activations = np.tanh(np.dot(nn_input, w_h) + b_h)
+        nn_input = np.reshape((img[:, :, tile] - data[:, :, tile]), (1, 1, IMG_SIZE[0], IMG_SIZE[1]))
 
-        w_m = params[3]
-        move_mean = np.dot(hidden_activations, w_m)
+        # conv + relu
+        filter_w = np.reshape(filter_w, (1,) + filter_w.shape)
+        filtered_input = np.maximum(convolve(nn_input, filter_w, axes=([2, 3], [2, 3]), dot_axes=([1], [0]), mode='valid') + \
+                                    np.reshape(filter_b, (-1, 1, 1)), 0)[0]
+        # max pooling
+        pooled_input = np.max(np.max(np.reshape(filtered_input, (filtered_input.shape[0],
+                                                                 filtered_input.shape[1]//self.move_pool_size[0],
+                                                                 self.move_pool_size[0],
+                                                                 filtered_input.shape[2]//self.move_pool_size[1],
+                                                                 self.move_pool_size[1])),
+                              axis=2), axis=3)
 
-        w_sd = params[4]
-        move_sd = np.exp(np.dot(hidden_activations, w_sd))
-        return move_mean, move_sd
+        # fc
+        mean = np.dot(np.ravel(pooled_input), out_w) + out_b
+        sd = self.move_sd_multiplier * np.ones(4)
+
+        return mean, sd
 
     def propose(self, x, data):
+        # pick tile
         p_i = self.get_pick_tile_proposal(x, data, self.params)
         i = np.random.choice(6, p=p_i)
+
+        # move tile
         mean, sd = self.get_move_tile_proposal(x, data, i, self.params)
         a = mean + sd*np.random.randn(mean.size)
         xp = x.copy()
@@ -201,18 +248,20 @@ class OccludingTilesPolicy(Policy):
         # theta (orientation) is periodic. It wraps around -pi/4 when it exceeds pi/4 and vice versa
         theta_index = (i*4) + 3
         xp[theta_index] = ((xp[theta_index] + X_BOUND) % (2.0 * X_BOUND)) - X_BOUND
+
         return xp
 
     def log_propose_probability(self, x, data, xp, params):
         changed_elements = np.nonzero(np.abs(xp - x))[0]
         if len(changed_elements) > 4:  # this should never happen since we update one tile at a time
             return -100.0
-        i = changed_elements[0] / 4
+        changed_tile = changed_elements[0] / 4
+
         # since theta (orientation) is periodic, we need to figure out the difference xp-x carefully
         p_i_x = self.get_pick_tile_proposal(x, data, params)
-        m_x, sd_x = self.get_move_tile_proposal(x, data, i, params)
-        xp_i = xp[i*4:(i+1)*4].copy()
-        x_i = x[i*4:(i+1)*4].copy()
+        m_x, sd_x = self.get_move_tile_proposal(x, data, changed_tile, params)
+        xp_i = xp[changed_tile*4:(changed_tile+1)*4].copy()
+        x_i = x[changed_tile*4:(changed_tile+1)*4].copy()
         theta_x = x_i[3]
         theta_xp = xp_i[3]
         # we might have gotten to xp from x in two ways (going in the positive or negative direction)
@@ -228,17 +277,6 @@ class OccludingTilesPolicy(Policy):
             xp_i[3] = dt2
             x_i[3] = 0.0
 
-        q_xp_x = np.log(p_i_x[i])
+        q_xp_x = np.log(p_i_x[changed_tile])
         q_xp_x += -0.5*(np.sum((xp_i - x_i - m_x)**2 / (sd_x**2))) - 0.5*4*np.log(2*np.pi) - np.sum(np.log(sd_x))
         return q_xp_x
-
-    def propose_probability(self, x, data, xp):
-        def _log_ppf(pp):
-            return self.log_propose_probability(x, data, xp, pp)
-
-        def _log_ppb(pp):
-            return self.log_propose_probability(xp, data, x, pp)
-
-        g_logppf = ag.grad(_log_ppf)
-        g_logppb = ag.grad(_log_ppb)
-        return np.exp(self.log_propose_probability(x, data, xp, self.params)), g_logppf(self.params), g_logppb(self.params)

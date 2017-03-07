@@ -122,15 +122,3 @@ class FindTheDotPolicy(Policy):
         m_x, sd_x = self.get_proposal_distribution(x, data, params)
         q_xp_x = -0.5*(np.sum((xp - x - m_x)**2 / (sd_x**2))) - 0.5*1*np.log(2*np.pi) - np.sum(np.log(sd_x))
         return q_xp_x
-
-    def propose_probability(self, x, data, xp):
-        def _log_ppf(pp):
-            return self.log_propose_probability(x, data, xp, pp)
-
-        def _log_ppb(pp):
-            return self.log_propose_probability(xp, data, x, pp)
-
-        g_logppf = ag.grad(_log_ppf)
-        g_logppb = ag.grad(_log_ppb)
-        return np.exp(self.log_propose_probability(x, data, xp, self.params)), g_logppf(self.params), g_logppb(self.params)
-
