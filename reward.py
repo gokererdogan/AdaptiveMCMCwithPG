@@ -7,7 +7,7 @@ transition kernel.
 13 Dec. 2016
 https://github.com/gokererdogan
 """
-import autograd.numpy as np
+import numpy as np
 
 
 def log_prob(target_distribution, x0, xs, accepteds):

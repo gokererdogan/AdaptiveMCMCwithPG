@@ -280,3 +280,65 @@ class OccludingTilesPolicy(Policy):
         q_xp_x = np.log(p_i_x[changed_tile])
         q_xp_x += -0.5*(np.sum((xp_i - x_i - m_x)**2 / (sd_x**2))) - 0.5*4*np.log(2*np.pi) - np.sum(np.log(sd_x))
         return q_xp_x
+
+
+class OccludingTilesPolicyFull(Policy):
+    """
+    Learns a one-stage policy that maps from image directly to a move for all tiles.
+    """
+    def __init__(self, n_hidden, sd=1.0):
+        Policy.__init__(self)
+        assert n_hidden >= 0
+        self.n_hidden = n_hidden
+        if self.n_hidden == 0:
+            # no hidden layer
+            self.has_hidden_layer = False
+        else:
+            self.has_hidden_layer = True
+        self.sd = sd
+
+        self.params = []
+        if self.has_hidden_layer:
+            self.params.append(np.random.randn(IMG_SIZE[0]*IMG_SIZE[1]*6, self.n_hidden) * 0.0001)
+            self.params.append(np.random.randn(self.n_hidden) * 0.0001)
+            self.params.append(np.random.randn(self.n_hidden, 24) * 0.0001)
+        else:
+            self.params.append(np.random.randn(IMG_SIZE[0]*IMG_SIZE[1]*6, 24) * 0.0001)
+
+    def __str__(self):
+        s = "OccludingTilesPolicyFull with n_hidden={0}, sd={0}".format(self.n_hidden, self.sd)
+        return s
+
+    def __repr__(self):
+        return self.__str__()
+
+    def get_proposal_distribution(self, x, data, params):
+        img = OccludingTilesDistribution.render(x)
+        nn_input = np.ravel(img - data)
+
+        if self.has_hidden_layer:
+            w_hidden = params[0]
+            b_hidden = params[1]
+            hidden_activations = np.maximum(np.dot(nn_input, w_hidden) + b_hidden, 0.0)
+            nn_input = hidden_activations
+
+        w_output = params[-1]
+        mean = np.dot(nn_input, w_output)
+        sd = np.ones(24) * self.sd
+        return mean, sd
+
+    def propose(self, x, data):
+        # move tiles
+        mean, sd = self.get_proposal_distribution(x, data, self.params)
+        a = mean + sd*np.random.randn(mean.size)
+        xp = x.copy()
+        xp += a
+        # theta (orientation) is periodic. It wraps around -pi/4 when it exceeds pi/4 and vice versa
+        xp[3::4] = ((xp[3::4] + X_BOUND) % (2.0 * X_BOUND)) - X_BOUND
+
+        return xp
+
+    def log_propose_probability(self, x, data, xp, params):
+        m_x, sd_x = self.get_proposal_distribution(x, data, params)
+        q_xp_x = -0.5*(np.sum((xp - x - m_x)**2 / (sd_x**2))) - 0.5*24*np.log(2*np.pi) - np.sum(np.log(sd_x))
+        return q_xp_x

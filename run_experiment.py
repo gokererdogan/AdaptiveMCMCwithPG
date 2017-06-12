@@ -10,7 +10,6 @@ import numpy as np
 from init_plotting import *
 
 import lddp_sampler as sampler
-from optimizer import adam
 
 
 def run_experiment(**kwargs):
@@ -18,12 +17,11 @@ def run_experiment(**kwargs):
     results_folder = kwargs['results_folder']
     my_target = kwargs['target_distribution']
     my_policy = kwargs['policy']
+    optimizer = kwargs['optimizer']
     reward_fn = kwargs['reward_function']
     reward_type = kwargs['reward_type']
     my_grad_estimator = kwargs['gradient_estimator']
     learning_rate_schedule = kwargs['learning_rate_schedule']
-    adam_b1 = kwargs['adam_b1']
-    adam_b2 = kwargs['adam_b2']
     chain_count = kwargs['chain_count']
     episode_length = kwargs['episode_length']
     epoch_count = kwargs['epoch_count']
@@ -66,6 +64,7 @@ def run_experiment(**kwargs):
         plt.ylabel(reward_type)
         rewards_plot_file = "{0:s}_rewards.png".format(results_file_prefix)
         plt.savefig(rewards_plot_file)
+        plt.close()
 
         plt.figure()
         plt.plot(ars[0:(iteration+1)])
@@ -75,16 +74,15 @@ def run_experiment(**kwargs):
         plt.savefig(ar_plot_file)
         plt.close()
 
-    params, rewards, grad_magnitudes, acceptance_rates = adam(my_chains, my_grad_estimator,
-                                                              learning_rate_schedule=learning_rate_schedule,
-                                                              epoch_count=epoch_count,
-                                                              episodes_per_epoch=episodes_per_epoch,
-                                                              report_period=report_period,
-                                                              save_period=save_period,
-                                                              plot_period=plot_period,
-                                                              report_callback=report_callback,
-                                                              plot_callback=plot_callback,
-                                                              b1=adam_b1, b2=adam_b2)
+    params, rewards, grad_magnitudes, acceptance_rates = optimizer(my_chains, my_grad_estimator,
+                                                                   learning_rate_schedule=learning_rate_schedule,
+                                                                   epoch_count=epoch_count,
+                                                                   episodes_per_epoch=episodes_per_epoch,
+                                                                   report_period=report_period,
+                                                                   save_period=save_period,
+                                                                   plot_period=plot_period,
+                                                                   report_callback=report_callback,
+                                                                   plot_callback=plot_callback)
 
     # save results
     params_file = "{0:s}_params.npy".format(results_file_prefix)
@@ -106,6 +104,7 @@ def run_experiment(**kwargs):
         plt.ylabel('Param {0:d} gradient magnitude'.format(i))
         plot_file = "{0:s}_grad_magnitudes_{1:d}.png".format(results_file_prefix, i)
         plt.savefig(plot_file)
+        plt.close()
 
     # form the results dictionary
     results = {'run_id': run_id, 'avg_reward': np.mean(rewards)}

@@ -11,7 +11,11 @@ import autograd as ag
 
 
 class Policy(object):
-    def __init__(self):
+    def __init__(self, seed=None):
+        if seed is None:
+            np.random.seed()
+        else:
+            np.random.seed(seed)
         # function for calculating the gradient of log propose probability
         self.grad_log_propose_probability = ag.grad(self.log_propose_probability, 3)
 
@@ -51,8 +55,8 @@ class Policy(object):
 
 
 class LinearGaussianPolicy(Policy):
-    def __init__(self, D, mean=None, sd=None):
-        Policy.__init__(self)
+    def __init__(self, D, mean=None, sd=None, seed=None):
+        Policy.__init__(self, seed=seed)
         self.D = D
         self.params = []
         if mean is None:
@@ -116,8 +120,8 @@ class LinearGaussianPolicy(Policy):
 
 
 class NonlinearGaussianPolicy(Policy):
-    def __init__(self, D, n_hidden, mean=None, sd=None):
-        Policy.__init__(self)
+    def __init__(self, D, n_hidden, mean=None, sd=None, seed=None):
+        Policy.__init__(self, seed=seed)
         self.D = D
         self.n_hidden = n_hidden
         self.params = []
@@ -162,7 +166,7 @@ class NonlinearGaussianPolicy(Policy):
     def get_proposal_distribution(self, x, data, params):
         w_input_hidden = params[0]
         b_hidden = params[1]
-        hidden_activations = np.tanh(np.dot(x, w_input_hidden) + b_hidden)
+        hidden_activations = np.maximum(np.dot(x, w_input_hidden) + b_hidden, 0.0)
         if self.mean_fixed:
             mean = self.mean
         else:

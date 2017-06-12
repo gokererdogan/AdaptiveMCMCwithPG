@@ -38,6 +38,25 @@ class GradientEstimator(object):
         return g
 
 
+class MeanRewardBaselineEstimator(GradientEstimator):
+    """
+    Use the average reward of all chains as baseline.
+    """
+    def __init__(self, clip=False):
+        GradientEstimator.__init__(self, clip=clip)
+
+    def __str__(self):
+        return "MeanRewardBaselineEstimator with clip={0}".format(self.clip)
+
+    def __repr__(self):
+        return self.__str__()
+
+    def estimate_gradient(self, rewards, grad_logp):
+        rewards_baselined = rewards - np.mean(rewards)
+        g = GradientEstimator.estimate_gradient(self, rewards_baselined, grad_logp)
+        return g
+
+
 class BBVIEstimator(GradientEstimator):
     """
     Use score function as control variate
