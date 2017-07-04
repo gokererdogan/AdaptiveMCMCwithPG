@@ -38,7 +38,7 @@ if __name__ == "__main__":
     my_target = target_distribution.MultivariateGaussian(mean=np.zeros(1), cov=np.eye(1))
 
     # optim_fn = [optimizer.adam, optimizer.sga]
-    optim_fn = optimizer.sga
+    optim_fn = optimizer.adam
     reward_type = "-Autocorrelation"
     def reward_fn(td, x0, xs, accs):
             return reward.auto_correlation_batch_means(td, x0, xs, accs, batch_count=reward_batch_count)
@@ -53,7 +53,7 @@ if __name__ == "__main__":
     my_grad_estimator = gradient_estimator.MeanRewardBaselineEstimator(clip=gradient_clip)
 
     # lr_schedule = parameter_schedule.LinearSchedule(start_value=0.01, end_value=0.0, decrease_for=50*35)
-    lr_schedule = [parameter_schedule.ConstantSchedule(0.005), parameter_schedule.ConstantSchedule(0.010)]
+    lr_schedule = parameter_schedule.ConstantSchedule(0.003)
 
     exp = Experiment(name='lddp_1D_Gaussian', experiment_method=run_experiment,
                      seed=seed, results_folder='./results/runs/1d', target_distribution=my_target,
@@ -65,7 +65,7 @@ if __name__ == "__main__":
                      episodes_per_epoch=episodes_per_epoch,
                      save_period=save_period, plot_period=plot_period, report_period=report_period)
 
-    exp.run(parallel=True, num_processes=-1)
+    exp.run(parallel=False, num_processes=-1)
     print exp.results
     exp.save('./results/runs/1d')
     exp.append_csv('./results/runs/1d/results_1d.csv')

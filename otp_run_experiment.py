@@ -12,6 +12,7 @@ import gradient_estimator
 import occluding_tiles_problem
 import reward
 import parameter_schedule
+import optimizer
 
 from run_experiment import run_experiment
 
@@ -51,13 +52,19 @@ if __name__ == "__main__":
     my_policy = [occluding_tiles_problem.OccludingTilesPolicy(learn_pick_tile=False, learn_move_tile=True,
                                                               move_filter_count=50, move_filter_size=(3, 3),
                                                               move_pool_size=(4, 4), move_sd_multiplier=1.0)]
-                                                              """
-    my_policy = [occluding_tiles_problem.OccludingTilesPolicyFull(n_hidden=0, sd=0.2),
-                 occluding_tiles_problem.OccludingTilesPolicyFull(n_hidden=200, sd=0.2)]
-    vimco_estimator = gradient_estimator.VIMCOEstimator(clip=True)
+    """
+    my_policy = [occluding_tiles_problem.OccludingTilesPolicyFull(n_hidden=200, sd_fixed=True, sd_multiplier=0.1),
+                 occluding_tiles_problem.OccludingTilesPolicyFull(n_hidden=200, sd_fixed=False, sd_multiplier=0.1)]
+
+    mean_estimator = gradient_estimator.MeanRewardBaselineEstimator(clip=True)
+    """
     learning_rate_schedule = [parameter_schedule.ConstantSchedule(10**(-4.5)),
                               parameter_schedule.ConstantSchedule(10**(-4.0))]
-    # learning_rate_schedule = [parameter_schedule.ConstantSchedule(10**(-5.0))]
+    """
+    # learning_rate_schedule = [parameter_schedule.ConstantSchedule(10**(-4.0))]
+    learning_rate_schedule = [parameter_schedule.ConstantSchedule(10**(-4.5))]
+
+    optim_fn = [optimizer.adam, optimizer.sga]
 
     reward_type = "Increase in Avg. Log Probability"
     reward_fn = reward.log_prob_increase_avg
@@ -73,8 +80,8 @@ if __name__ == "__main__":
                      grouped_params=['epoch_count', 'episode_length', 'episodes_per_epoch', 'save_period',
                                      'report_period', 'plot_period', 'load_from_run'],
                      seed=314925, results_folder='./results/runs', target_distribution=my_target, policy=my_policy,
-                     reward_type=reward_type, reward_function=reward_fn, gradient_estimator=vimco_estimator,
-                     learning_rate_schedule=learning_rate_schedule, adam_b1=[0.9], adam_b2=[0.999],
+                     reward_type=reward_type, reward_function=reward_fn, gradient_estimator=mean_estimator,
+                     learning_rate_schedule=learning_rate_schedule, optimizer=optim_fn,
                      chain_count=20, episode_length=episode_length, epoch_count=epoch_count,
                      episodes_per_epoch=episodes_per_epoch, save_period=save_period, report_period=report_period,
                      plot_period=plot_period)

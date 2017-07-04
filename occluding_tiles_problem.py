@@ -286,7 +286,7 @@ class OccludingTilesPolicyFull(Policy):
     """
     Learns a one-stage policy that maps from image directly to a move for all tiles.
     """
-    def __init__(self, n_hidden, sd=1.0):
+    def __init__(self, n_hidden, sd_fixed=True, sd_multiplier=1.0):
         Policy.__init__(self)
         assert n_hidden >= 0
         self.n_hidden = n_hidden
@@ -295,18 +295,28 @@ class OccludingTilesPolicyFull(Policy):
             self.has_hidden_layer = False
         else:
             self.has_hidden_layer = True
-        self.sd = sd
+
+        self.sd_fixed = sd_fixed
+        self.sd_multiplier = sd_multiplier
 
         self.params = []
         if self.has_hidden_layer:
-            self.params.append(np.random.randn(IMG_SIZE[0]*IMG_SIZE[1]*6, self.n_hidden) * 0.0001)
-            self.params.append(np.random.randn(self.n_hidden) * 0.0001)
-            self.params.append(np.random.randn(self.n_hidden, 24) * 0.0001)
+            self.params.append(np.random.randn(IMG_SIZE[0]*IMG_SIZE[1]*6, self.n_hidden) * 0.001)
+            self.params.append(np.random.randn(self.n_hidden) * 0.001)
+            if self.sd_fixed:
+                self.params.append(np.random.randn(self.n_hidden, 24) * 0.001)
+            else:
+                self.params.append(np.random.randn(self.n_hidden, 48) * 0.001)
         else:
-            self.params.append(np.random.randn(IMG_SIZE[0]*IMG_SIZE[1]*6, 24) * 0.0001)
+            if self.sd_fixed:
+                self.params.append(np.random.randn(IMG_SIZE[0]*IMG_SIZE[1]*6, 24) * 0.001)
+            else:
+                self.params.append(np.random.randn(IMG_SIZE[0]*IMG_SIZE[1]*6, 48) * 0.001)
 
     def __str__(self):
-        s = "OccludingTilesPolicyFull with n_hidden={0}, sd={0}".format(self.n_hidden, self.sd)
+        s = "OccludingTilesPolicyFull with n_hidden={0}, sd_multiplier={1}, sd learned? {2}".format(self.n_hidden,
+                                                                                                    self.sd_multiplier,
+                                                                                                    self.sd_fixed)
         return s
 
     def __repr__(self):
@@ -323,8 +333,12 @@ class OccludingTilesPolicyFull(Policy):
             nn_input = hidden_activations
 
         w_output = params[-1]
-        mean = np.dot(nn_input, w_output)
-        sd = np.ones(24) * self.sd
+        out = np.dot(nn_input, w_output)
+        mean = out[0:24]
+        if self.sd_fixed:
+            sd = np.ones(24) * self.sd_multiplier
+        else:
+            sd = np.exp(out[24:]) * self.sd_multiplier
         return mean, sd
 
     def propose(self, x, data):
@@ -340,5 +354,5 @@ class OccludingTilesPolicyFull(Policy):
 
     def log_propose_probability(self, x, data, xp, params):
         m_x, sd_x = self.get_proposal_distribution(x, data, params)
-        q_xp_x = -0.5*(np.sum((xp - x - m_x)**2 / (sd_x**2))) - 0.5*24*np.log(2*np.pi) - np.sum(np.log(sd_x))
+        q_xp_x = -0.5*(np.sum((xp - x - m_x)**2 / (sd_x**2))) - 0.5*m_x.shape[0]*np.log(2*np.pi) - np.sum(np.log(sd_x))
         return q_xp_x

@@ -32,6 +32,7 @@ class ParallelMHChains(object):
         # get function for gradient of reject case
         # (the gradients for the accept case do not involve the gradient of acceptance ratio)
         self.grad_log_reject = ag.grad(self._log_rr, 3)
+        self.grad_reject = ag.grad(self._rr, 3)
 
     def reset(self):
         # let the target distribution know we are starting a new chain.
@@ -48,6 +49,9 @@ class ParallelMHChains(object):
         log_q_x_xp = self.policy.log_propose_probability(xp, data, x, params)
         log_a = (logp_xp + log_q_x_xp) - (logp_x + log_q_xp_x)
         return log_a
+
+    def _rr(self, x, data, xp, params):
+        return 1.0 - np.exp(self.log_acceptance_ratio(x, data, xp, params))
 
     def _log_rr(self, x, data, xp, params):
         return np.log(1.0 - np.exp(self.log_acceptance_ratio(x, data, xp, params)))
@@ -85,9 +89,9 @@ class ParallelMHChains(object):
                     x = xp
                 else:
                     # calculate gradient of reject probability
-                    drr = self.grad_log_reject(x, data, xp, self.policy.params)
+                    drr = self.grad_reject(x, data, xp, self.policy.params)
                     dlog_p_xp_x = self.policy.grad_log_propose_probability(x, data, xp, self.policy.params)
-                    gradient = [t1+t2 for t1, t2 in zip(dlog_p_xp_x,  drr)]
+                    gradient = [((1.0 - a)*t1 + t2) / (1.0 - a) for t1, t2 in zip(dlog_p_xp_x,  drr)]
 
                     accepteds[t] = False
 
